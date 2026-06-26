@@ -1,0 +1,33 @@
+name: Update IPTV with Logo
+
+on:
+  schedule:
+    # 每天北京时间 6点、18点 各跑一次（UTC 22点 / 10点）
+    - cron: '0 22,10 * * *'
+  workflow_dispatch:   # 允许你在网页上手动点击立即运行
+
+permissions:
+  contents: write       # 允许 Action 提交文件回仓库
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行台标注入脚本
+        run: python build.py
+
+      - name: 提交更新
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add live_with_logo.m3u
+          git commit -m "自动更新 IPTV 列表与台标" || echo "无变化，跳过提交"
+          git push
