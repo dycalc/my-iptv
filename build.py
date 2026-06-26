@@ -1,27 +1,29 @@
 import re
 import urllib.request
 
-# ============ 配置区 ============
-# 原作者的 M3U 链接（保持源头，原作者更新你自动跟）
 ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/babylife/China-ShangHai-IPTV-list/master/IPTV_Enhanced_change.m3u"
-# 台标库（已改用 jsDelivr 仓库直链，绕开宕掉的 live.fanmingming.cn 域名）
 LOGO_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
-# EPG 节目单地址（同样走 jsDelivr）
 EPG_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/e.xml"
-# 输出文件名
 OUTPUT_FILE = "live_with_logo.m3u"
-# 是否开启台标存在性探测（True=自动跳过 404 台标，避免破图；False=不校验，速度更快）
 CHECK_LOGO = True
 
-# 频道名 → 台标库实际文件名 的映射表（命中不了的地方台逐个补这里）
+# 上海地方台映射表：你的频道名 → 范明明库真实文件名（核对后逐个补全）
 LOGO_NAME_MAP = {
     # "都市频道": "上海都市",
-    # "新闻综合": "上海新闻综合",
+    # "东方影视": "东方影视",
+    # "欢笑剧场": "SiTV欢笑剧场",
 }
-# ================================
 
-# 简单缓存，避免对同一个台标 URL 重复探测
 _logo_cache = {}
+
+def clean_channel_name(name):
+    # 1. 去掉清晰度后缀
+    n = re.sub(r'(4K|HD|FHD|UHD|50帧|高清|标清)', '', name).strip()
+    # 2. CCTV-1 / CCTV-5+ → CCTV1 / CCTV5+（范明明库无横杠）
+    m = re.match(r'^CCTV-?(\d+\+?)', n)
+    if m:
+        n = 'CCTV' + m.group(1)
+    return n
 
 def logo_exists(url):
     if url in _logo_cache:
@@ -40,39 +42,33 @@ def main():
     with urllib.request.urlopen(req, timeout=30) as response:
         content = response.read().decode('utf-8')
 
-    output_lines = []
-    hit, miss = 0, 0
-
+    out, hit, miss = [], 0, 0
     for line in content.splitlines():
-        # 1. 头部补上 EPG 节目单地址
         if line.startswith('#EXTM3U'):
-            if 'x-tvg-url' not in line:
-                line = f'#EXTM3U x-tvg-url="{EPG_URL}"'
-        # 2. 给频道行注入 tvg-logo
+            # 替换/补上 EPG 地址，保留原有 catchup 参数
+            if 'x-tvg-url' in line:
+                line = re.sub(r'x-tvg-url="[^"]*"', f'x-tvg-url="{EPG_URL}"', line)
+            else:
+                line = line.replace('#EXTM3U', f'#EXTM3U x-tvg-url="{EPG_URL}"', 1)
         elif line.startswith('#EXTINF:') and 'tvg-logo' not in line:
             parts = line.split(',')
             if len(parts) > 1:
                 ch_name = parts[-1].strip()
-                # 清洗频道名，去掉 4K/HD 等后缀，提升匹配率
-                clean_name = re.sub(r'(4K|HD|FHD|50帧)', '', ch_name).strip()
-                # 优先查映射表
-                logo_key = LOGO_NAME_MAP.get(clean_name, clean_name)
-                logo_url = f"{LOGO_BASE}/{logo_key}.png"
-
+                clean = clean_channel_name(ch_name)
+                key = LOGO_NAME_MAP.get(clean, clean)
+                logo_url = f"{LOGO_BASE}/{key}.png"
                 if (not CHECK_LOGO) or logo_exists(logo_url):
-                    line = line.replace(
-                        '#EXTINF:-1',
-                        f'#EXTINF:-1 tvg-name="{clean_name}" tvg-logo="{logo_url}"'
-                    )
+                    line = line.replace('#EXTINF:-1',
+                        f'#EXTINF:-1 tvg-name="{clean}" tvg-logo="{logo_url}"', 1)
                     hit += 1
                 else:
-                    miss += 1  # 台标不存在，保持原行，不塞 404
-        output_lines.append(line)
+                    miss += 1
+        out.append(line)
 
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(output_lines))
-
-    print(f"已生成 {OUTPUT_FILE}：共 {len(output_lines)} 行，台标命中 {hit} 个，未命中跳过 {miss} 个")
+        f.write('
+'.join(out))
+    print(f"完成：{len(out)} 行，命中 {hit}，跳过 {miss}")
 
 if __name__ == '__main__':
     main()
