@@ -1,74 +1,95 @@
 import re
 import urllib.request
 
-ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/babylife/China-ShangHai-IPTV-list/master/IPTV_Enhanced_change.m3u"
-LOGO_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
-EPG_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/e.xml"
+# 原始数据源（直连 GitHub，不用 gh-proxy）
+ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/auflute/IPTV-Unicom-Shanghai/main/unicom-sha-local/unicom.m3u"
+# 台标 CDN 基础路径（最终域名是 cdn.jsdelivr.net）
+LOGO_CDN_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
+# 输出文件 —— 必须和 workflow 里的 git add 一致
 OUTPUT_FILE = "live_with_logo.m3u"
 
+# 频道名 → 台标文件名的映射（按范明明仓库的实际文件名）
 LOGO_NAME_MAP = {
-    # 后续把匹配不到的地方台补这里
-    # "都市频道": "上海都市",
-    "新闻综合": "上视新闻",          # 终极修正：范明明库里叫 "上视新闻"
-    "第一财经": "上海第一财经",       # 终极修正：范明明库里叫 "上海第一财经"
-    "都市频道": "上海都市",          # 维持上海都市
-    "茶频道": "茶",    
+    "新闻综合": "上视新闻",
+    "上海新闻综合": "上视新闻",
+    "都市频道": "上海都市",
+    "上海都市": "上海都市",
+    "第一财经": "上海第一财经",
+    "上海第一财经": "上海第一财经",
+    "哈哈炫动": "哈哈炫动",
+    "上海哈哈炫动": "哈哈炫动",
+    "东方卫视": "东方卫视",
+    "上海教育": "上海教育",
+    "金色频道": "金色频道",
+    "法治天地": "法治天地",
+    "七彩戏剧": "七彩戏剧",
+    "游戏风云": "游戏风云",
+    "动漫秀场": "动漫秀场",
+    "生活时尚": "生活时尚",
+    "东方购物": "东方购物",
+    "茶频道": "茶",
 }
 
-def clean_channel_name(name):
-    n = re.sub(r'(4K|HD|FHD|UHD|50帧|高清|标清)', '', name).strip()
-
-    m = re.match(r'^CCTV-?(\d+\+?)', n)
+def clean_channel_name(raw_name: str) -> str:
+    """去掉清晰度/制式后缀，标准化 CCTV 写法"""
+    n = raw_name.strip()
+    n = re.sub(r'\b(4K|8K|HD|FHD|UHD|SD|50帧|60帧|高清|标清|超清)\b', '', n, flags=re.IGNORECASE).strip()
+    m = re.match(r'^CCTV-?(\d+[\+]?).*', n, re.IGNORECASE)
     if m:
         return 'CCTV' + m.group(1)
-
     return n
+
+def get_logo_url(channel_name: str) -> str:
+    """生成 cdn.jsdelivr.net 的台标链接"""
+    clean = clean_channel_name(channel_name)
+    logo_key = LOGO_NAME_MAP.get(clean, clean)
+    return f"{LOGO_CDN_BASE}/{logo_key}.png"
 
 def main():
     req = urllib.request.Request(
         ORIGINAL_M3U_URL,
         headers={'User-Agent': 'Mozilla/5.0'}
     )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        content = resp.read().decode('utf-8', errors='ignore')
 
-    with urllib.request.urlopen(req, timeout=30) as response:
-        content = response.read().decode('utf-8', errors='ignore')
-
-    out = []
-    count = 0
+    out_lines = []
+    modified = 0
 
     for line in content.splitlines():
-        if line.startswith('#EXTM3U'):
-            if 'x-tvg-url' in line:
-                line = re.sub(
-                    r'x-tvg-url="[^"]*"',
-                    f'x-tvg-url="{EPG_URL}"',
-                    line
+        if line.startswith('#EXTINF:'):
+            if ',' not in line:
+                out_lines.append(line)
+                continue
+
+            attrs_part, display_name = line.split(',', 1)
+            display_name = display_name.strip()
+            new_logo_url = get_logo_url(display_name)
+
+            # 同时支持单引号和双引号的 tvg-logo
+            if re.search(r"""tvg-logo\s*=\s*['"][^'"]*['"]""", attrs_part):
+                # 替换已有的 tvg-logo（保留原有引号类型）
+                def replacer(m):
+                    quote = m.group(2)   # ' 或 "
+                    return f'tvg-logo={quote}{new_logo_url}{quote}'
+                new_attrs = re.sub(
+                    r"""(tvg-logo\s*=\s*)(['"])([^'"]*)(\2)""",
+                    replacer,
+                    attrs_part
                 )
+                line = new_attrs + ',' + display_name
             else:
-                line = line.replace(
-                    '#EXTM3U',
-                    f'#EXTM3U x-tvg-url="{EPG_URL}"',
-                    1
-                )
+                # 没有 tvg-logo，则在属性末尾追加（使用双引号）
+                line = attrs_part.rstrip() + f' tvg-logo="{new_logo_url}",' + display_name
 
-        elif line.startswith('#EXTINF:') and 'tvg-logo' not in line:
-            parts = line.rsplit(',', 1)
-            if len(parts) == 2:
-                left, ch_name = parts
-                ch_name = ch_name.strip()
-                clean = clean_channel_name(ch_name)
-                logo_key = LOGO_NAME_MAP.get(clean, clean)
-                logo_url = f"{LOGO_BASE}/{logo_key}.png"
+            modified += 1
 
-                line = f'{left} tvg-name="{clean}" tvg-logo="{logo_url}",{ch_name}'
-                count += 1
-
-        out.append(line)
+        out_lines.append(line)
 
     with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='\n') as f:
-        f.write('\n'.join(out) + '\n')
+        f.write('\n'.join(out_lines) + '\n')
 
-    print(f"已生成 {OUTPUT_FILE}，共注入 {count} 个台标字段")
+    print(f"已生成 {OUTPUT_FILE}，共更新 {modified} 个频道的台标。")
 
 if __name__ == '__main__':
     main()
