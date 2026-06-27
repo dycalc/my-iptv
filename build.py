@@ -1,13 +1,14 @@
 import re
 import urllib.request
 
-# 原始数据源（直连）
+# 原始数据源（直连 GitHub，不用 gh-proxy）
 ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/auflute/IPTV-Unicom-Shanghai/main/unicom-sha-local/unicom.m3u"
-# 台标 CDN 前缀
+# 台标 CDN 基础路径（最终域名是 cdn.jsdelivr.net）
 LOGO_CDN_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
-OUTPUT_FILE = "unicom_with_logo.m3u"
+# 输出文件 —— 必须和 workflow 里的 git add 一致
+OUTPUT_FILE = "live_with_logo.m3u"
 
-# 频道名 → 台标文件名的映射表（与范明明库一致）
+# 频道名 → 台标文件名的映射（按范明明仓库的实际文件名）
 LOGO_NAME_MAP = {
     "新闻综合": "上视新闻",
     "上海新闻综合": "上视新闻",
@@ -30,7 +31,7 @@ LOGO_NAME_MAP = {
 }
 
 def clean_channel_name(raw_name: str) -> str:
-    """清洗频道名，去掉清晰度/制式后缀，标准化 CCTV 写法"""
+    """去掉清晰度/制式后缀，标准化 CCTV 写法"""
     n = raw_name.strip()
     n = re.sub(r'\b(4K|8K|HD|FHD|UHD|SD|50帧|60帧|高清|标清|超清)\b', '', n, flags=re.IGNORECASE).strip()
     m = re.match(r'^CCTV-?(\d+[\+]?).*', n, re.IGNORECASE)
@@ -39,7 +40,7 @@ def clean_channel_name(raw_name: str) -> str:
     return n
 
 def get_logo_url(channel_name: str) -> str:
-    """根据频道显示名生成 CDN 台标地址"""
+    """生成 cdn.jsdelivr.net 的台标链接"""
     clean = clean_channel_name(channel_name)
     logo_key = LOGO_NAME_MAP.get(clean, clean)
     return f"{LOGO_CDN_BASE}/{logo_key}.png"
@@ -65,11 +66,11 @@ def main():
             display_name = display_name.strip()
             new_logo_url = get_logo_url(display_name)
 
-            # 同时处理单引号和双引号的 tvg-logo
+            # 同时支持单引号和双引号的 tvg-logo
             if re.search(r"""tvg-logo\s*=\s*['"][^'"]*['"]""", attrs_part):
-                # 替换原有 tvg-logo 值（保留原有引号类型）
+                # 替换已有的 tvg-logo（保留原有引号类型）
                 def replacer(m):
-                    quote = m.group(2)  # 单引号或双引号
+                    quote = m.group(2)   # ' 或 "
                     return f'tvg-logo={quote}{new_logo_url}{quote}'
                 new_attrs = re.sub(
                     r"""(tvg-logo\s*=\s*)(['"])([^'"]*)(\2)""",
@@ -78,7 +79,7 @@ def main():
                 )
                 line = new_attrs + ',' + display_name
             else:
-                # 本行没有 tvg-logo，则在属性末尾添加（使用双引号）
+                # 没有 tvg-logo，则在属性末尾追加（使用双引号）
                 line = attrs_part.rstrip() + f' tvg-logo="{new_logo_url}",' + display_name
 
             modified += 1
@@ -88,7 +89,7 @@ def main():
     with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(out_lines) + '\n')
 
-    print(f"已生成 {OUTPUT_FILE}，共更新 {modified} 个频道的台标为 CDN 地址。")
+    print(f"已生成 {OUTPUT_FILE}，共更新 {modified} 个频道的台标。")
 
 if __name__ == '__main__':
     main()
