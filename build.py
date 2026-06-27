@@ -1,7 +1,9 @@
 import re
 import urllib.request
 
-ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/babylife/China-ShangHai-IPTV-list/master/IPTV_Enhanced_change.m3u"
+# ========== 只改这里 ==========
+ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/auflute/IPTV-Unicom-Shanghai/main/unicom-sha-local/unicom.m3u"
+# =============================
 LOGO_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
 EPG_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/e.xml"
 OUTPUT_FILE = "live_with_logo.m3u"
