@@ -1,16 +1,14 @@
 import re
 import urllib.request
 
-# 原始 m3u 数据源（直连，不使用 gh-proxy）
+# 原始数据源（直连）
 ORIGINAL_M3U_URL = "https://raw.githubusercontent.com/auflute/IPTV-Unicom-Shanghai/main/unicom-sha-local/unicom.m3u"
-# 台标 CDN 基础路径
-LOGO_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
-# 输出文件
+# 台标 CDN 前缀
+LOGO_CDN_BASE = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
 OUTPUT_FILE = "unicom_with_logo.m3u"
 
-# 频道名 -> 台标文件名 的手动映射（不区分大小写，但建议与范明明库中文件名一致）
+# 频道名 → 台标文件名的映射表（与范明明库一致）
 LOGO_NAME_MAP = {
-    # 上海地方台
     "新闻综合": "上视新闻",
     "上海新闻综合": "上视新闻",
     "都市频道": "上海都市",
@@ -28,31 +26,23 @@ LOGO_NAME_MAP = {
     "动漫秀场": "动漫秀场",
     "生活时尚": "生活时尚",
     "东方购物": "东方购物",
-    # 茶频道特例（如果列表中有）
     "茶频道": "茶",
 }
 
 def clean_channel_name(raw_name: str) -> str:
-    """
-    清洗频道名称，去除清晰度/制式后缀，标准化 CCTV 写法。
-    返回可能匹配范明明库文件名的字符串。
-    """
+    """清洗频道名，去掉清晰度/制式后缀，标准化 CCTV 写法"""
     n = raw_name.strip()
-    # 去掉清晰度、制式等标记
     n = re.sub(r'\b(4K|8K|HD|FHD|UHD|SD|50帧|60帧|高清|标清|超清)\b', '', n, flags=re.IGNORECASE).strip()
-    # CCTV 标准化：CCTV-1 综合 -> CCTV1
     m = re.match(r'^CCTV-?(\d+[\+]?).*', n, re.IGNORECASE)
     if m:
         return 'CCTV' + m.group(1)
-    # CGTN 等保持原样
     return n
 
 def get_logo_url(channel_name: str) -> str:
-    """根据频道显示名生成台标 URL"""
+    """根据频道显示名生成 CDN 台标地址"""
     clean = clean_channel_name(channel_name)
-    # 先查映射表
     logo_key = LOGO_NAME_MAP.get(clean, clean)
-    return f"{LOGO_BASE}/{logo_key}.png"
+    return f"{LOGO_CDN_BASE}/{logo_key}.png"
 
 def main():
     req = urllib.request.Request(
@@ -63,11 +53,10 @@ def main():
         content = resp.read().decode('utf-8', errors='ignore')
 
     out_lines = []
-    modified_count = 0
+    modified = 0
 
     for line in content.splitlines():
         if line.startswith('#EXTINF:'):
-            # 分离属性部分和频道显示名
             if ',' not in line:
                 out_lines.append(line)
                 continue
@@ -76,28 +65,30 @@ def main():
             display_name = display_name.strip()
             new_logo_url = get_logo_url(display_name)
 
-            # 如果已有 tvg-logo，替换它的值；否则在属性区末尾添加
-            if 'tvg-logo="' in attrs_part:
-                # 替换现有 tvg-logo 的 URL
+            # 同时处理单引号和双引号的 tvg-logo
+            if re.search(r"""tvg-logo\s*=\s*['"][^'"]*['"]""", attrs_part):
+                # 替换原有 tvg-logo 值（保留原有引号类型）
+                def replacer(m):
+                    quote = m.group(2)  # 单引号或双引号
+                    return f'tvg-logo={quote}{new_logo_url}{quote}'
                 new_attrs = re.sub(
-                    r'tvg-logo="[^"]*"',
-                    f'tvg-logo="{new_logo_url}"',
+                    r"""(tvg-logo\s*=\s*)(['"])([^'"]*)(\2)""",
+                    replacer,
                     attrs_part
                 )
                 line = new_attrs + ',' + display_name
             else:
-                # 在属性末尾追加 tvg-logo（紧挨逗号前加一个空格）
-                # 注意 attrs_part 尾部可能已有空格，先 rstrip 再补空格
+                # 本行没有 tvg-logo，则在属性末尾添加（使用双引号）
                 line = attrs_part.rstrip() + f' tvg-logo="{new_logo_url}",' + display_name
 
-            modified_count += 1
+            modified += 1
 
         out_lines.append(line)
 
     with open(OUTPUT_FILE, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(out_lines) + '\n')
 
-    print(f"已生成 {OUTPUT_FILE}，共更新 {modified_count} 个频道的台标。")
+    print(f"已生成 {OUTPUT_FILE}，共更新 {modified} 个频道的台标为 CDN 地址。")
 
 if __name__ == '__main__':
     main()
